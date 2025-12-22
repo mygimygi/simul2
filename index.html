@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Voxel Architect</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Babel for in-browser compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Nunito', sans-serif;
+            background-color: #1a1a1a;
+            touch-action: none; /* Prevent pull-to-refresh on mobile */
+        }
+        /* Custom Utility for Safe Areas */
+        .pt-safe { padding-top: env(safe-area-inset-top, 20px); }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
+        
+        /* Hide scrollbar */
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        
+        .cursor-wait { cursor: wait; }
+    </style>
+
+    <!-- Import Map -->
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "three": "https://esm.sh/three@0.160.0",
+    "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/",
+    "lucide-react": "https://esm.sh/lucide-react@0.294.0?deps=react@18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "three/": "https://esm.sh/three@^0.182.0/"
+  }
+}
+</script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { 
+            Box, Bird, Cat, Rabbit, Users, Code2, Hammer, FolderOpen, ChevronUp, 
+            FileJson, History, Play, Pause, Info, Wrench, RotateCcw, Target, 
+            Volume2, VolumeX, Crosshair, X, Settings, Sparkles, Loader2, Wand2,
+            Upload, Copy, Check, Weight, Ruler, Palette, Maximize, ArrowLeft,
+            Sun, CloudSun, Rocket, CircleDot
+        } from 'lucide-react';
+
+        // --- CONSTANTS ---
+        const COLORS = {
+            DARK: 0x4A3728,
+            LIGHT: 0x654321,
+            WHITE: 0xF0F0F0,
+            GOLD: 0xFFD700,
+            BLACK: 0x111111,
+            WOOD: 0x3B2F2F,
+            GREEN: 0x228B22,
+            TALON: 0xE5C100,
+            WATER: 0x40A4FF,
+            STONE: 0x7D8285,
+            SNOW: 0xFFFFFF,
+            GRASS_TOP: 0x5D9E44,
+            DIRT: 0x8B5A2B,
+            CLOUD: 0xFFFFFF,
+            BG_LAB: 0x1a1a1a,
+            BG_GRASS: 0x87CEEB,
+            BG_DESERT: 0xFFCC99,
+            BG_SPACE: 0x050510,
+            FLOOR_LAB: 0x333333,
+            FLOOR_GRASS: 0x4caf50,
+            FLOOR_DESERT: 0xE6C288,
+            FLOOR_SPACE: 0x111111
+        };
+
+        const RAINBOW_COLORS = [
+            { name: 'Red', value: 0xFF3333, tw: 'bg-red-500' },
+            { name: 'Orange', value: 0xFFA500, tw: 'bg-orange-500' },
+            { name: 'Yellow', value: 0xFFD700, tw: 'bg-yellow-400' },
+            { name: 'Green', value: 0x22C55E, tw: 'bg-green-500' },
+            { name: 'Blue', value: 0x3B82F6, tw: 'bg-blue-500' },
+            { name: 'Indigo', value: 0x6366F1, tw: 'bg-indigo-500' },
+            { name: 'Violet', value: 0xA855F7, tw: 'bg-purple-500' }
+        ];
+
+        const CONFIG = {
+            VOXEL_SIZE: 1,
+            FLOOR_Y: -12,
+            BG_COLOR: 0x1a1a1a,
+            BOUNDARY_LIMIT: 100,
+        };
+
+        // --- TYPES ---
+        const AppState = {
+            STABLE: 'STABLE',
+            DISMANTLING: 'DISMANTLING',
+            REBUILDING: 'REBUILDING',
+            BALL_DROPPING: 'BALL_DROPPING'
+        };
+
+        // --- GENERATORS ---
+        function setBlock(map, x, y, z, color) {
+            const rx = Math.round(x);
+            const ry = Math.round(y);
+            const rz = Math.round(z);
+            const key = `${rx},${ry},${rz}`;
+            map.set(key, { x: rx, y: ry, z: rz, color });
+        }
+
+        function generateSphere(map, cx, cy, cz, r, col, sy = 1) {
+            const r2 = r * r;
+            const xMin = Math.floor(cx - r);
+            const xMax = Math.ceil(cx + r);
+            const yMin = Math.floor(cy - r * sy);
+            const yMax = Math.ceil(cy + r * sy);
+            const zMin = Math.floor(cz - r);
+            const zMax = Math.ceil(cz + r);
+
+            for (let x = xMin; x <= xMax; x++) {
+                for (let y = yMin; y <= yMax; y++) {
+                    for (let z = zMin; z <= zMax; z++) {
+                        const dx = x - cx;
+                        const dy = (y - cy) / sy;
+                        const dz = z - cz;
+                        if (dx * dx + dy * dy + dz * dz <= r2) {
+                            setBlock(map, x, y, z, col);
+                        }
+                    }
+                }
+            }
+        }
+
+        const Generators = {
+            SolidCube: () => Generators.CustomCube(8, 8, 8, [COLORS.WHITE]),
+            CustomCube: (width, height, depth, colors = []) => {
+                const map = new Map();
+                const startX = -Math.floor(width/2);
+                const startZ = -Math.floor(depth/2);
+                const palette = colors.length > 0 ? colors : RAINBOW_COLORS.map(c => c.value);
+
+                for (let x = startX; x < startX + width; x++) {
+                    for (let y = 0; y < height; y++) {
+                        const worldY = CONFIG.FLOOR_Y + 0.5 + y;
+                        for (let z = startZ; z < startZ + depth; z++) {
+                            const color = palette[Math.floor(Math.random() * palette.length)];
+                            setBlock(map, x, worldY, z, color);
+                        }
+                    }
+                }
+                return Array.from(map.values());
+            },
+            Eagle: () => {
+                const map = new Map();
+                for (let x = -8; x < 8; x++) {
+                    const y = Math.sin(x * 0.2) * 1.5;
+                    const z = Math.cos(x * 0.1) * 1.5;
+                    generateSphere(map, x, y, z, 1.8, COLORS.WOOD);
+                    if (Math.random() > 0.7) generateSphere(map, x, y + 2, z + (Math.random() - 0.5) * 3, 1.5, COLORS.GREEN);
+                }
+                const EX = 0, EY = 2, EZ = 2;
+                generateSphere(map, EX, EY + 6, EZ, 4.5, COLORS.DARK, 1.4);
+                for (let x = EX - 2; x <= EX + 2; x++) for (let y = EY + 4; y <= EY + 9; y++) setBlock(map, x, y, EZ + 3, COLORS.LIGHT);
+                for (let x of [-4, -3, 3, 4]) for (let y = EY + 4; y <= EY + 10; y++) for (let z = EZ - 2; z <= EZ + 3; z++) setBlock(map, x, y, z, COLORS.DARK);
+                for (let x = EX - 2; x <= EX + 2; x++) for (let y = EY; y <= EY + 4; y++) for (let z = EZ - 5; z <= EZ - 3; z++) setBlock(map, x, y, z, COLORS.WHITE);
+                const HY = EY + 12, HZ = EZ + 1;
+                generateSphere(map, EX, HY, HZ, 2.8, COLORS.WHITE);
+                generateSphere(map, EX, HY - 2, HZ, 2.5, COLORS.WHITE);
+                [[-2, 0], [-2, 1], [2, 0], [2, 1]].forEach(o => setBlock(map, EX + o[0], EY + o[1], EZ, COLORS.TALON));
+                [[0, 1], [0, 2], [1, 1], [-1, 1]].forEach(o => setBlock(map, EX + o[0], HY, HZ + 2 + o[1], COLORS.GOLD));
+                setBlock(map, EX, HY - 1, HZ + 3, COLORS.GOLD);
+                [[-1.5, COLORS.BLACK], [1.5, COLORS.BLACK]].forEach(o => setBlock(map, EX + o[0], HY + 0.5, HZ + 1.5, o[1]));
+                [[-1.5, COLORS.WHITE], [1.5, COLORS.WHITE]].forEach(o => setBlock(map, EX + o[0], HY + 1.5, HZ + 1.5, o[1]));
+                return Array.from(map.values());
+            },
+            Cat: () => {
+                const map = new Map();
+                const CY = CONFIG.FLOOR_Y + 1; const CX = 0, CZ = 0;
+                generateSphere(map, CX - 3, CY + 2, CZ, 2.2, COLORS.DARK, 1.2);
+                generateSphere(map, CX + 3, CY + 2, CZ, 2.2, COLORS.DARK, 1.2);
+                for (let y = 0; y < 7; y++) {
+                    const r = 3.5 - (y * 0.2);
+                    generateSphere(map, CX, CY + 2 + y, CZ, r, COLORS.DARK);
+                    generateSphere(map, CX, CY + 2 + y, CZ + 2, r * 0.6, COLORS.WHITE);
+                }
+                for (let y = 0; y < 5; y++) {
+                    setBlock(map, CX - 1.5, CY + y, CZ + 3, COLORS.WHITE); setBlock(map, CX + 1.5, CY + y, CZ + 3, COLORS.WHITE);
+                    setBlock(map, CX - 1.5, CY + y, CZ + 2, COLORS.WHITE); setBlock(map, CX + 1.5, CY + y, CZ + 2, COLORS.WHITE);
+                }
+                const CHY = CY + 9;
+                generateSphere(map, CX, CHY, CZ, 3.2, COLORS.LIGHT, 0.8);
+                [[-2, 1], [2, 1]].forEach(side => {
+                    setBlock(map, CX + side[0], CHY + 3, CZ, COLORS.DARK); setBlock(map, CX + side[0] * 0.8, CHY + 3, CZ + 1, COLORS.WHITE);
+                    setBlock(map, CX + side[0], CHY + 4, CZ, COLORS.DARK);
+                });
+                for (let i = 0; i < 12; i++) {
+                    const a = i * 0.3, tx = Math.cos(a) * 4.5, tz = Math.sin(a) * 4.5;
+                    if (tz > -2) { setBlock(map, CX + tx, CY, CZ + tz, COLORS.DARK); setBlock(map, CX + tx, CY + 1, CZ + tz, COLORS.DARK); }
+                }
+                setBlock(map, CX - 1, CHY + 0.5, CZ + 2.5, COLORS.GOLD); setBlock(map, CX + 1, CHY + 0.5, CZ + 2.5, COLORS.GOLD);
+                setBlock(map, CX - 1, CHY + 0.5, CZ + 3, COLORS.BLACK); setBlock(map, CX + 1, CHY + 0.5, CZ + 3, COLORS.BLACK);
+                setBlock(map, CX, CHY, CZ + 3, COLORS.TALON);
+                return Array.from(map.values());
+            },
+            Rabbit: () => {
+                const map = new Map();
+                const LOG_Y = CONFIG.FLOOR_Y + 2.5;
+                const RX = 0, RZ = 0;
+                for (let x = -6; x <= 6; x++) {
+                    const radius = 2.8 + Math.sin(x * 0.5) * 0.2;
+                    generateSphere(map, x, LOG_Y, 0, radius, COLORS.DARK);
+                    if (x === -6 || x === 6) generateSphere(map, x, LOG_Y, 0, radius - 0.5, COLORS.WOOD);
+                    if (Math.random() > 0.8) setBlock(map, x, LOG_Y + radius, (Math.random() - 0.5) * 2, COLORS.GREEN);
+                }
+                const BY = LOG_Y + 2.5;
+                generateSphere(map, RX - 1.5, BY + 1.5, RZ - 1.5, 1.8, COLORS.WHITE);
+                generateSphere(map, RX + 1.5, BY + 1.5, RZ - 1.5, 1.8, COLORS.WHITE);
+                generateSphere(map, RX, BY + 2, RZ, 2.2, COLORS.WHITE, 0.8);
+                generateSphere(map, RX, BY + 2.5, RZ + 1.5, 1.5, COLORS.WHITE);
+                setBlock(map, RX - 1.2, BY, RZ + 2.2, COLORS.LIGHT); setBlock(map, RX + 1.2, BY, RZ + 2.2, COLORS.LIGHT);
+                setBlock(map, RX - 2.2, BY, RZ - 0.5, COLORS.WHITE); setBlock(map, RX + 2.2, BY, RZ - 0.5, COLORS.WHITE);
+                generateSphere(map, RX, BY + 1.5, RZ - 2.5, 1.0, COLORS.WHITE);
+                const HY = BY + 4.5; const HZ = RZ + 1;
+                generateSphere(map, RX, HY, HZ, 1.7, COLORS.WHITE);
+                generateSphere(map, RX - 1.1, HY - 0.5, HZ + 0.5, 1.0, COLORS.WHITE);
+                generateSphere(map, RX + 1.1, HY - 0.5, HZ + 0.5, 1.0, COLORS.WHITE);
+                for (let y = 0; y < 5; y++) {
+                    const curve = y * 0.2;
+                    setBlock(map, RX - 0.8, HY + 1.5 + y, HZ - curve, COLORS.WHITE); setBlock(map, RX - 1.2, HY + 1.5 + y, HZ - curve, COLORS.WHITE);
+                    setBlock(map, RX - 1.0, HY + 1.5 + y, HZ - curve + 0.5, COLORS.LIGHT);
+                    setBlock(map, RX + 0.8, HY + 1.5 + y, HZ - curve, COLORS.WHITE); setBlock(map, RX + 1.2, HY + 1.5 + y, HZ - curve, COLORS.WHITE);
+                    setBlock(map, RX + 1.0, HY + 1.5 + y, HZ - curve + 0.5, COLORS.LIGHT);
+                }
+                setBlock(map, RX - 0.8, HY + 0.2, HZ + 1.5, COLORS.BLACK); setBlock(map, RX + 0.8, HY + 0.2, HZ + 1.5, COLORS.BLACK);
+                setBlock(map, RX, HY - 0.5, HZ + 1.8, COLORS.TALON);
+                return Array.from(map.values());
+            },
+            Twins: () => {
+                const map = new Map();
+                function buildMiniEagle(offsetX, offsetZ, mirror) {
+                    for (let x = -5; x < 5; x++) {
+                        const y = Math.sin(x * 0.4) * 0.5;
+                        generateSphere(map, offsetX + x, y, offsetZ, 1.2, COLORS.WOOD);
+                        if (Math.random() > 0.8) generateSphere(map, offsetX + x, y + 1, offsetZ, 1, COLORS.GREEN);
+                    }
+                    const EX = offsetX, EY = 1.5, EZ = offsetZ;
+                    generateSphere(map, EX, EY + 4, EZ, 3.0, COLORS.DARK, 1.4);
+                    for (let x = EX - 1; x <= EX + 1; x++) for (let y = EY + 2; y <= EY + 6; y++) setBlock(map, x, y, EZ + 2, COLORS.LIGHT);
+                    for (let x = EX - 1; x <= EX + 1; x++) for (let y = EY + 2; y <= EY + 3; y++) setBlock(map, x, y, EZ - 3, COLORS.WHITE);
+                    for (let y = EY + 2; y <= EY + 6; y++) for (let z = EZ - 1; z <= EZ + 2; z++) { setBlock(map, EX - 3, y, z, COLORS.DARK); setBlock(map, EX + 3, y, z, COLORS.DARK); }
+                    const HY = EY + 8, HZ = EZ + 1;
+                    generateSphere(map, EX, HY, HZ, 2.0, COLORS.WHITE);
+                    setBlock(map, EX, HY, HZ + 2, COLORS.GOLD); setBlock(map, EX, HY - 0.5, HZ + 2, COLORS.GOLD);
+                    setBlock(map, EX - 1, HY + 0.5, HZ + 1, COLORS.BLACK); setBlock(map, EX + 1, HY + 0.5, HZ + 1, COLORS.BLACK);
+                    setBlock(map, EX - 1, EY, EZ, COLORS.TALON); setBlock(map, EX + 1, EY, EZ, COLORS.TALON);
+                }
+                buildMiniEagle(-10, 2, false);
+                buildMiniEagle(10, -2, true);
+                return Array.from(map.values());
+            }
+        };
+
+        // --- VOXEL ENGINE ---
+        class VoxelEngine {
+            constructor(container, onStateChange, onCountChange, onSimulationComplete) {
+                this.container = container;
+                this.onStateChange = onStateChange;
+                this.onCountChange = onCountChange;
+                this.onSimulationComplete = onSimulationComplete;
+                this.instanceMesh = null;
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2();
+                this.placementPlane = null;
+                this.ghostBall = null;
+                this.ghostGuide = null;
+                this.placementCallback = null;
+                this.boundaryLimit = CONFIG.BOUNDARY_LIMIT;
+                this.envGroup = null;
+                this.cornerLights = [];
+                this.currentEnvType = 'lab';
+                this.audioCtx = null;
+                this.isMuted = false;
+                this.musicTimeout = null;
+                this.musicNoteIndex = 0;
+                this.isMusicPlaying = false;
+                this.ballMesh = null;
+                this.ballProps = { weight: 0, vy: 0, vx: 0, vz: 0, radius: 0, active: false };
+                this.impactOccurred = false;
+                this.dummy = new THREE.Object3D();
+                this.voxels = [];
+                this.rebuildTargets = [];
+                this.rebuildStartTime = 0;
+                this.state = AppState.STABLE;
+                this.animationId = 0;
+                this.spatialHash = new Map();
+
+                this.init();
+            }
+
+            init() {
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(COLORS.BG_LAB);
+                this.scene.fog = new THREE.Fog(COLORS.BG_LAB, 100, 600);
+
+                this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(80, 80, 140);
+
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                this.container.appendChild(this.renderer.domElement);
+
+                this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.autoRotate = true;
+                this.controls.autoRotateSpeed = 0.5;
+                this.controls.target.set(0, 20, 0);
+                this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+                this.scene.add(ambientLight);
+                const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+                hemiLight.position.set(0, 200, 0);
+                this.scene.add(hemiLight);
+                const mainLight = new THREE.DirectionalLight(0xffffff, 2.4);
+                mainLight.position.set(50, 150, 50);
+                mainLight.castShadow = true;
+                mainLight.shadow.mapSize.width = 2048;
+                mainLight.shadow.mapSize.height = 2048;
+                const d = 150;
+                mainLight.shadow.camera.left = -d; mainLight.shadow.camera.right = d; mainLight.shadow.camera.top = d; mainLight.shadow.camera.bottom = -d;
+                mainLight.shadow.bias = -0.0005;
+                this.scene.add(mainLight);
+                const fillLight1 = new THREE.DirectionalLight(0xddeeff, 0.8); fillLight1.position.set(-100, 50, -50); this.scene.add(fillLight1);
+                const fillLight2 = new THREE.DirectionalLight(0xffeedd, 0.8); fillLight2.position.set(100, 50, 50); this.scene.add(fillLight2);
+                const spotLight1 = new THREE.SpotLight(0xffffff, 2.0); spotLight1.position.set(-80, 150, 0); spotLight1.lookAt(0,0,0); this.scene.add(spotLight1);
+                const spotLight2 = new THREE.SpotLight(0xffffff, 2.0); spotLight2.position.set(80, 150, 0); spotLight2.lookAt(0,0,0); this.scene.add(spotLight2);
+
+                this.envGroup = new THREE.Group();
+                this.scene.add(this.envGroup);
+                this.updateEnvironment('lab', CONFIG.BOUNDARY_LIMIT);
+
+                this.placementPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -CONFIG.FLOOR_Y);
+
+                this.onMouseMove = this.onMouseMove.bind(this);
+                this.onClick = this.onClick.bind(this);
+                this.renderer.domElement.addEventListener('mousemove', this.onMouseMove);
+                this.renderer.domElement.addEventListener('click', this.onClick);
+                this.renderer.domElement.addEventListener('touchstart', (e) => {
+                    const touch = e.changedTouches[0];
+                    this.onClick({ clientX: touch.clientX, clientY: touch.clientY });
+                });
+
+                window.addEventListener('click', () => this.tryResumeAudio());
+                window.addEventListener('touchstart', () => this.tryResumeAudio());
+
+                this.animate = this.animate.bind(this);
+                this.animate();
+            }
+
+            updateEnvironment(type, size) {
+                this.currentEnvType = type;
+                this.boundaryLimit = size;
+                while(this.envGroup.children.length > 0) this.envGroup.remove(this.envGroup.children[0]);
+                this.cornerLights.forEach(l => this.scene.remove(l));
+                this.cornerLights = [];
+
+                const gridSize = this.boundaryLimit * 3;
+                let bgColor = COLORS.BG_LAB;
+                let fogDensity = 600;
+
+                if (type === 'grassland') { bgColor = COLORS.BG_GRASS; fogDensity = 800; }
+                else if (type === 'desert') { bgColor = COLORS.BG_DESERT; fogDensity = 500; }
+                else if (type === 'space') { bgColor = COLORS.BG_SPACE; fogDensity = 2000; }
+
+                this.scene.background = new THREE.Color(bgColor);
+                this.scene.fog = new THREE.Fog(bgColor, 100, fogDensity);
+
+                if (type === 'lab') {
+                    const divisions = Math.max(20, Math.floor(this.boundaryLimit / 2.5));
+                    const gridHelper = new THREE.GridHelper(this.boundaryLimit * 2, divisions, 0x666666, 0x333333);
+                    gridHelper.position.y = CONFIG.FLOOR_Y + 0.1;
+                    this.envGroup.add(gridHelper);
+                    const roomGeo = new THREE.BoxGeometry(this.boundaryLimit * 2, this.boundaryLimit * 2, this.boundaryLimit * 2);
+                    const roomMat = new THREE.MeshStandardMaterial({ color: 0x333333, side: THREE.BackSide, metalness: 0.5, roughness: 0.05 });
+                    const room = new THREE.Mesh(roomGeo, roomMat);
+                    room.position.set(0, CONFIG.FLOOR_Y + this.boundaryLimit, 0);
+                    room.receiveShadow = true;
+                    this.envGroup.add(room);
+                    this.addCornerLights();
+                } else if (type === 'space') {
+                    const gridHelper = new THREE.GridHelper(gridSize, 40, 0x444444, 0x111111);
+                    gridHelper.position.y = CONFIG.FLOOR_Y;
+                    this.envGroup.add(gridHelper);
+                } else {
+                    const floorColor = type === 'grassland' ? COLORS.FLOOR_GRASS : COLORS.FLOOR_DESERT;
+                    const floorGeo = new THREE.PlaneGeometry(gridSize, gridSize);
+                    const floorMat = new THREE.MeshStandardMaterial({ color: floorColor, roughness: 0.8, side: THREE.FrontSide });
+                    const floor = new THREE.Mesh(floorGeo, floorMat);
+                    floor.rotation.x = -Math.PI / 2;
+                    floor.position.y = CONFIG.FLOOR_Y;
+                    floor.receiveShadow = true;
+                    this.envGroup.add(floor);
+                }
+            }
+
+            addCornerLights() {
+                const cornerDist = this.boundaryLimit * 1.2;
+                const cornerHeight = this.boundaryLimit * 1.5;
+                const corners = [[cornerDist, cornerHeight, cornerDist], [cornerDist, cornerHeight, -cornerDist], [-cornerDist, cornerHeight, cornerDist], [-cornerDist, cornerHeight, -cornerDist]];
+                corners.forEach(pos => {
+                    const light = new THREE.SpotLight(0xffffff, 1.0);
+                    light.position.set(pos[0], pos[1], pos[2]);
+                    light.lookAt(0, 0, 0);
+                    this.scene.add(light);
+                    this.cornerLights.push(light);
+                });
+            }
+
+            initAudio() {
+                if (!this.audioCtx) {
+                    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContextClass) this.audioCtx = new AudioContextClass();
+                }
+                this.tryResumeAudio();
+            }
+            tryResumeAudio() {
+                if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume();
+            }
+            setMute(muted) {
+                this.isMuted = muted;
+                if (muted && this.audioCtx) this.audioCtx.suspend();
+                else if (!muted && this.audioCtx) this.audioCtx.resume();
+            }
+            startMusic() {
+                this.initAudio();
+                if (this.isMusicPlaying) return;
+                this.isMusicPlaying = true;
+                this.musicNoteIndex = 0;
+                this.playNextMusicNote();
+            }
+            stopMusic() {
+                this.isMusicPlaying = false;
+                if (this.musicTimeout) clearTimeout(this.musicTimeout);
+            }
+            playNextMusicNote() {
+                if (!this.isMusicPlaying || !this.audioCtx) return;
+                if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+                const scale = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.50];
+                const pattern = [0, 2, 4, 5, 4, 2, 0, -1, 1, 3, 5, 3, 1, 0, 1, -1, 0, 2, 4, 2, 0, -1, 0, 2, 4, 5, 4, 2, 0, 2, 0, -1];
+                const noteIdx = pattern[this.musicNoteIndex % pattern.length];
+                if (noteIdx !== -1 && !this.isMuted && this.audioCtx.state === 'running') {
+                    const freq = scale[noteIdx];
+                    const osc = this.audioCtx.createOscillator();
+                    const gain = this.audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
+                    gain.connect(this.audioCtx.destination);
+                    const now = this.audioCtx.currentTime;
+                    gain.gain.setValueAtTime(0, now);
+                    gain.gain.linearRampToValueAtTime(0.1, now + 0.01);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                    osc.start(now);
+                    osc.stop(now + 0.12 + 0.1);
+                }
+                this.musicNoteIndex++;
+                this.musicTimeout = setTimeout(() => this.playNextMusicNote(), 60000 / 180);
+            }
+            playTone(freq, type, duration, vol = 0.5) {
+                if (!this.audioCtx || this.isMuted) return;
+                this.tryResumeAudio();
+                const osc = this.audioCtx.createOscillator();
+                const gain = this.audioCtx.createGain();
+                osc.type = type; osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
+                osc.connect(gain); gain.connect(this.audioCtx.destination);
+                gain.gain.setValueAtTime(vol, this.audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + duration);
+                osc.start(); osc.stop(this.audioCtx.currentTime + duration);
+            }
+            playNoise(duration, vol = 0.5) {
+                if (!this.audioCtx || this.isMuted) return;
+                this.tryResumeAudio();
+                const bufferSize = this.audioCtx.sampleRate * duration;
+                const buffer = this.audioCtx.createBuffer(1, bufferSize, this.audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                const noise = this.audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = this.audioCtx.createBiquadFilter();
+                filter.type = 'lowpass'; filter.frequency.value = 800;
+                const gain = this.audioCtx.createGain();
+                noise.connect(filter); filter.connect(gain); gain.connect(this.audioCtx.destination);
+                gain.gain.setValueAtTime(vol, this.audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + duration);
+                noise.start();
+            }
+
+            loadInitialModel(data) {
+                if (this.ballMesh) { this.scene.remove(this.ballMesh); this.ballMesh = null; this.ballProps.active = false; }
+                this.impactOccurred = false;
+                this.createVoxels(data);
+                this.onCountChange(this.voxels.length);
+                this.state = AppState.STABLE;
+                this.onStateChange(this.state);
+                this.controls.autoRotate = true;
+            }
+
+            createVoxels(data) {
+                if (this.instanceMesh) {
+                    this.scene.remove(this.instanceMesh);
+                    this.instanceMesh.geometry.dispose();
+                    this.instanceMesh.material.dispose();
+                }
+                this.voxels = data.map((v, i) => {
+                    const c = new THREE.Color(v.color);
+                    c.offsetHSL(0, 0, (Math.random() * 0.1) - 0.05);
+                    return { id: i, x: v.x, y: v.y, z: v.z, color: c, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, rvx: 0, rvy: 0, rvz: 0, isActive: false };
+                });
+                const geometry = new THREE.BoxGeometry(CONFIG.VOXEL_SIZE - 0.05, CONFIG.VOXEL_SIZE - 0.05, CONFIG.VOXEL_SIZE - 0.05);
+                const material = new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0.1 });
+                this.instanceMesh = new THREE.InstancedMesh(geometry, material, this.voxels.length);
+                this.instanceMesh.castShadow = true; this.instanceMesh.receiveShadow = true;
+                this.scene.add(this.instanceMesh);
+                this.draw();
+            }
+
+            draw() {
+                if (!this.instanceMesh) return;
+                this.voxels.forEach((v, i) => {
+                    this.dummy.position.set(v.x, v.y, v.z);
+                    this.dummy.rotation.set(v.rx, v.ry, v.rz);
+                    this.dummy.updateMatrix();
+                    this.instanceMesh.setMatrixAt(i, this.dummy.matrix);
+                    this.instanceMesh.setColorAt(i, v.color);
+                });
+                this.instanceMesh.instanceMatrix.needsUpdate = true;
+                this.instanceMesh.instanceColor.needsUpdate = true;
+            }
+
+            startPlacementMode(radius, callback) {
+                this.placementCallback = callback;
+                this.controls.autoRotate = false;
+                const geometry = new THREE.SphereGeometry(radius, 32, 32);
+                const material = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.5 });
+                this.ghostBall = new THREE.Mesh(geometry, material);
+                this.ghostBall.position.set(0, this.boundaryLimit * 1.5, 0);
+                this.scene.add(this.ghostBall);
+                const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,-100,0)]);
+                const lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.3 });
+                this.ghostGuide = new THREE.Line(lineGeo, lineMat);
+                this.scene.add(this.ghostGuide);
+            }
+
+            stopPlacementMode() {
+                this.placementCallback = null;
+                if (this.ghostBall) { this.scene.remove(this.ghostBall); this.ghostBall = null; }
+                if (this.ghostGuide) { this.scene.remove(this.ghostGuide); this.ghostGuide = null; }
+            }
+
+            onMouseMove(event) {
+                if (!this.placementCallback || !this.ghostBall || !this.ghostGuide) return;
+                this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const target = new THREE.Vector3();
+                let highestY = CONFIG.FLOOR_Y;
+                const intersects = this.instanceMesh ? this.raycaster.intersectObject(this.instanceMesh) : [];
+                if (intersects.length > 0) {
+                    target.copy(intersects[0].point);
+                    highestY = intersects[0].point.y;
+                } else {
+                    this.raycaster.ray.intersectPlane(this.placementPlane, target);
+                    const searchRadius = 1.5;
+                    for (const v of this.voxels) {
+                        if (Math.abs(v.x - target.x) < searchRadius && Math.abs(v.z - target.z) < searchRadius) {
+                            if (v.y > highestY) highestY = v.y;
+                        }
+                    }
+                }
+                const spawnY = CONFIG.FLOOR_Y + this.boundaryLimit * 1.5;
+                this.ghostBall.position.set(target.x, spawnY, target.z);
+                const positions = this.ghostGuide.geometry.attributes.position.array;
+                positions[0] = target.x; positions[1] = spawnY; positions[2] = target.z;
+                positions[3] = target.x; positions[4] = highestY; positions[5] = target.z;
+                this.ghostGuide.geometry.attributes.position.needsUpdate = true;
+            }
+
+            onClick(event) {
+                this.tryResumeAudio();
+                if (this.placementCallback && this.ghostBall) {
+                    this.placementCallback(this.ghostBall.position.x, this.ghostBall.position.z);
+                    return;
+                }
+                this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                if (this.ballMesh && this.ballProps.active) {
+                    const ballIntersects = this.raycaster.intersectObject(this.ballMesh);
+                    if (ballIntersects.length > 0) {
+                        this.ballProps.vy = 0.8 + Math.random() * 0.5;
+                        this.ballProps.vx = (Math.random() - 0.5) * 0.5;
+                        this.ballProps.vz = (Math.random() - 0.5) * 0.5;
+                        this.playTone(600, 'sine', 0.1, 0.5);
+                        return;
+                    }
+                }
+                if (this.state === AppState.DISMANTLING || this.state === AppState.BALL_DROPPING) {
+                    const target = new THREE.Vector3();
+                    if (this.raycaster.ray.intersectPlane(this.placementPlane, target)) {
+                        const influenceRadius = 25;
+                        let moved = false;
+                        this.voxels.forEach(v => {
+                            const dx = v.x - target.x; const dz = v.z - target.z; const dist = Math.sqrt(dx*dx + dz*dz);
+                            if (dist < influenceRadius) {
+                                if (!v.isActive) v.isActive = true;
+                                const force = (influenceRadius - dist) / influenceRadius;
+                                v.vy += force * 1.5 + Math.random() * 0.5;
+                                v.vx += dx * 0.05 * force; v.vz += dz * 0.05 * force;
+                                v.rvx += (Math.random() - 0.5) * force; v.rvy += (Math.random() - 0.5) * force;
+                                moved = true;
+                            }
+                        });
+                        if (moved) this.playNoise(0.2, 0.3);
+                    }
+                }
+            }
+
+            dropBall(weight, size, x, z) {
+                if (this.ballMesh) this.scene.remove(this.ballMesh);
+                const radius = Math.max(0.6, size * 0.6);
+                const geometry = new THREE.SphereGeometry(radius, 64, 64);
+                const material = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.3, roughness: 0.2 });
+                this.ballMesh = new THREE.Mesh(geometry, material);
+                this.ballMesh.castShadow = true;
+                this.ballMesh.position.set(x, CONFIG.FLOOR_Y + this.boundaryLimit * 1.5, z);
+                this.scene.add(this.ballMesh);
+                this.ballProps = { weight: weight, vy: 0, vx: 0, vz: 0, radius: radius, active: true };
+                this.impactOccurred = false;
+                this.state = AppState.BALL_DROPPING;
+                this.onStateChange(this.state);
+                this.controls.autoRotate = false;
+            }
+
+            dismantle() {
+                if (this.state !== AppState.STABLE) return;
+                this.state = AppState.DISMANTLING;
+                this.onStateChange(this.state);
+                this.voxels.forEach(v => {
+                    v.vx = (Math.random() - 0.5) * 0.8; v.vy = Math.random() * 0.5; v.vz = (Math.random() - 0.5) * 0.8;
+                    v.rvx = (Math.random() - 0.5) * 0.2; v.rvy = (Math.random() - 0.5) * 0.2; v.rvz = (Math.random() - 0.5) * 0.2;
+                    v.isActive = true;
+                });
+            }
+
+            rebuild(targetModel) {
+                if (this.state === AppState.REBUILDING) return;
+                if (this.ballMesh) { this.scene.remove(this.ballMesh); this.ballMesh = null; this.ballProps.active = false; }
+                const available = this.voxels.map((v, i) => ({ index: i, color: v.color, taken: false }));
+                const mappings = new Array(this.voxels.length).fill(null);
+                
+                const getColorDist = (c1, hex2) => {
+                    const c2 = new THREE.Color(hex2);
+                    const r = (c1.r - c2.r) * 0.3; const g = (c1.g - c2.g) * 0.59; const b = (c1.b - c2.b) * 0.11;
+                    return Math.sqrt(r * r + g * g + b * b);
+                };
+
+                targetModel.forEach(target => {
+                    let bestDist = 9999; let bestIdx = -1;
+                    for (let i = 0; i < available.length; i++) {
+                        if (available[i].taken) continue;
+                        const d = getColorDist(available[i].color, target.color);
+                        if (d < bestDist) { bestDist = d; bestIdx = i; if (d < 0.01) break; }
+                    }
+                    if (bestIdx !== -1) {
+                        available[bestIdx].taken = true;
+                        const h = Math.max(0, (target.y - CONFIG.FLOOR_Y) / 15);
+                        mappings[available[bestIdx].index] = { x: target.x, y: target.y, z: target.z, delay: h * 800 };
+                    }
+                });
+                for (let i = 0; i < this.voxels.length; i++) {
+                    if (!mappings[i]) mappings[i] = { x: this.voxels[i].x, y: this.voxels[i].y, z: this.voxels[i].z, isRubble: true, delay: 0 };
+                }
+                this.rebuildTargets = mappings;
+                this.rebuildStartTime = Date.now();
+                this.state = AppState.REBUILDING;
+                this.onStateChange(this.state);
+            }
+
+            updatePhysics() {
+                if (this.state === AppState.BALL_DROPPING && this.ballMesh && this.ballProps.active) {
+                    const wFactor = Math.min(this.ballProps.weight, 100);
+                    const gravity = (0.2 + (wFactor * 0.05)) / 12.0;
+                    this.ballProps.vy -= gravity;
+                    this.ballMesh.position.y += this.ballProps.vy;
+                    this.ballMesh.position.x += this.ballProps.vx;
+                    this.ballMesh.position.z += this.ballProps.vz;
+                    this.ballProps.vx *= 0.98; this.ballProps.vz *= 0.98;
+                    
+                    const ballY = this.ballMesh.position.y - this.ballProps.radius;
+                    let impact = false;
+
+                    if (ballY < this.boundaryLimit) {
+                         for (const v of this.voxels) {
+                             if (!v.isActive) {
+                                 const dx = this.ballMesh.position.x - v.x;
+                                 const dy = (this.ballMesh.position.y) - v.y;
+                                 const dz = this.ballMesh.position.z - v.z;
+                                 const distSq = dx*dx + dy*dy + dz*dz;
+                                 const threshold = this.ballProps.radius + 0.6;
+                                 if (distSq < threshold * threshold) { impact = true; break; }
+                             }
+                         }
+                    }
+                    if (ballY <= CONFIG.FLOOR_Y) {
+                        impact = true;
+                        if (this.ballMesh.position.y < CONFIG.FLOOR_Y + this.ballProps.radius) this.ballMesh.position.y = CONFIG.FLOOR_Y + this.ballProps.radius;
+                    }
+                    const limit = this.boundaryLimit;
+                    if (this.ballMesh.position.x > limit) { this.ballMesh.position.x = limit; this.ballProps.vx *= -0.8; }
+                    else if (this.ballMesh.position.x < -limit) { this.ballMesh.position.x = -limit; this.ballProps.vx *= -0.8; }
+                    if (this.ballMesh.position.z > limit) { this.ballMesh.position.z = limit; this.ballProps.vz *= -0.8; }
+                    else if (this.ballMesh.position.z < -limit) { this.ballMesh.position.z = -limit; this.ballProps.vz *= -0.8; }
+
+                    if (impact) {
+                        const weight = this.ballProps.weight;
+                        if (!this.impactOccurred) {
+                            this.impactOccurred = true;
+                            if (weight <= 10) this.playTone(400 - (weight * 20), 'sine', 0.2, 0.3);
+                            else { this.playNoise(0.6 + (weight * 0.01), 0.4 + (Math.min(weight, 50) * 0.01)); this.playTone(80, 'triangle', 0.4, 0.4); }
+                            setTimeout(() => { this.onSimulationComplete(); }, 3000);
+                        }
+                        if (weight <= 10 && this.impactOccurred) {
+                             this.ballProps.vy *= -0.5;
+                             if (Math.abs(this.ballProps.vy) < 0.2) this.ballProps.active = false;
+                        } else if (this.impactOccurred) {
+                            const impactX = this.ballMesh.position.x;
+                            const impactY = this.ballMesh.position.y - this.ballProps.radius;
+                            const impactZ = this.ballMesh.position.z;
+                            const explosionRadius = this.ballProps.radius + (weight * 0.2);
+                            const forcePower = weight * 0.05;
+                            this.voxels.forEach(v => {
+                                const dx = v.x - impactX; const dy = v.y - impactY; const dz = v.z - impactZ;
+                                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                                if (dist < explosionRadius) {
+                                    if (!v.isActive) {
+                                         v.isActive = true;
+                                         const force = ((explosionRadius - dist) / explosionRadius) * forcePower;
+                                         v.vx = (dx / dist) * force * (1 + Math.random());
+                                         v.vy = (dy / dist) * force * (1 + Math.random()) + (Math.random() * 0.5);
+                                         v.vz = (dz / dist) * force * (1 + Math.random());
+                                         v.rvx = (Math.random() - 0.5) * force; v.rvy = (Math.random() - 0.5) * force; v.rvz = (Math.random() - 0.5) * force;
+                                    }
+                                }
+                            });
+                            this.ballProps.vy *= -0.3;
+                            if (Math.abs(this.ballProps.vy) < 0.5) this.ballProps.active = false;
+                        }
+                        if (!this.impactOccurred) this.ballProps.vy *= -0.6;
+                    }
+                }
+
+                if (this.state === AppState.DISMANTLING || this.state === AppState.BALL_DROPPING) {
+                    const limit = this.boundaryLimit;
+                    const floorY = CONFIG.FLOOR_Y + 0.5;
+                    const ceilingY = CONFIG.FLOOR_Y + (limit * 2);
+                    this.spatialHash.clear();
+                    const cellSize = 1.5;
+
+                    this.voxels.forEach(v => {
+                        if (v.isActive || this.state === AppState.DISMANTLING) {
+                            v.vy -= 0.025;
+                            v.x += v.vx; v.y += v.vy; v.z += v.vz;
+                            v.rx += v.rvx; v.ry += v.rvy; v.rz += v.rvz;
+                            if (v.x > limit) { v.x = limit; v.vx *= -0.8; } else if (v.x < -limit) { v.x = -limit; v.vx *= -0.8; }
+                            if (v.z > limit) { v.z = limit; v.vz *= -0.8; } else if (v.z < -limit) { v.z = -limit; v.vz *= -0.8; }
+                            if (v.y > ceilingY) { v.y = ceilingY; v.vy *= -0.8; }
+                            if (v.y < floorY) {
+                                v.y = floorY; v.vy *= -0.5; v.vx *= 0.9; v.vz *= 0.9;
+                                v.rvx *= 0.8; v.rvy *= 0.8; v.rvz *= 0.8;
+                                if (Math.abs(v.vy) < 0.05 && Math.abs(v.vx) < 0.05) v.isActive = false;
+                            }
+                            if (v.isActive || Math.abs(v.vx) > 0.01) {
+                                 const key = `${Math.floor(v.x/cellSize)},${Math.floor(v.y/cellSize)},${Math.floor(v.z/cellSize)}`;
+                                 if (!this.spatialHash.has(key)) this.spatialHash.set(key, []);
+                                 this.spatialHash.get(key).push(v.id);
+                            }
+                        }
+                    });
+
+                    const voxelRadius = 0.55; 
+                    const minDist = voxelRadius * 2;
+                    const minDistSq = minDist * minDist;
+
+                    for (const [key, indices] of this.spatialHash.entries()) {
+                         for (let i = 0; i < indices.length; i++) {
+                             const v1 = this.voxels[indices[i]];
+                             for (let j = i + 1; j < indices.length; j++) {
+                                 this.resolveVoxelPair(v1, this.voxels[indices[j]], minDist, minDistSq);
+                             }
+                         }
+                         const parts = key.split(',').map(Number);
+                         const neighbors = [`${parts[0]+1},${parts[1]},${parts[2]}`, `${parts[0]},${parts[1]-1},${parts[2]}`, `${parts[0]},${parts[1]},${parts[2]+1}`];
+                         neighbors.forEach(nk => {
+                             if (this.spatialHash.has(nk)) {
+                                 const nIndices = this.spatialHash.get(nk);
+                                 indices.forEach(i1 => { nIndices.forEach(i2 => { this.resolveVoxelPair(this.voxels[i1], this.voxels[i2], minDist, minDistSq); }); });
+                             }
+                         });
+                    }
+
+                } else if (this.state === AppState.REBUILDING) {
+                    const now = Date.now();
+                    const elapsed = now - this.rebuildStartTime;
+                    let allDone = true;
+                    this.voxels.forEach((v, i) => {
+                        const t = this.rebuildTargets[i];
+                        if (t.isRubble) return;
+                        if (elapsed < t.delay) { allDone = false; return; }
+                        const speed = 0.12;
+                        v.x += (t.x - v.x) * speed; v.y += (t.y - v.y) * speed; v.z += (t.z - v.z) * speed;
+                        v.rx += (0 - v.rx) * speed; v.ry += (0 - v.ry) * speed; v.rz += (0 - v.rz) * speed;
+                        if ((t.x - v.x) ** 2 + (t.y - v.y) ** 2 + (t.z - v.z) ** 2 > 0.01) allDone = false;
+                        else { v.x = t.x; v.y = t.y; v.z = t.z; v.rx = 0; v.ry = 0; v.rz = 0; }
+                    });
+                    if (allDone) { this.state = AppState.STABLE; this.onStateChange(this.state); }
+                }
+            }
+
+            resolveVoxelPair(v1, v2, minDist, minDistSq) {
+                const dx = v2.x - v1.x; const dy = v2.y - v1.y; const dz = v2.z - v1.z;
+                const distSq = dx*dx + dy*dy + dz*dz;
+                if (distSq < minDistSq && distSq > 0.0001) {
+                    const dist = Math.sqrt(distSq);
+                    const nx = dx / dist; const ny = dy / dist; const nz = dz / dist;
+                    const overlap = minDist - dist;
+                    const separationFactor = 0.5;
+                    const moveX = nx * overlap * separationFactor;
+                    const moveY = ny * overlap * separationFactor;
+                    const moveZ = nz * overlap * separationFactor;
+                    v1.x -= moveX; v1.y -= moveY; v1.z -= moveZ;
+                    v2.x += moveX; v2.y += moveY; v2.z += moveZ;
+                    
+                    const rvx = v2.vx - v1.vx; const rvy = v2.vy - v1.vy; const rvz = v2.vz - v1.vz;
+                    const velAlongNormal = rvx * nx + rvy * ny + rvz * nz;
+                    if (velAlongNormal > 0) return;
+                    const e = 0.3;
+                    let j = -(1 + e) * velAlongNormal; j /= 2;
+                    const ix = j * nx; const iy = j * ny; const iz = j * nz;
+                    v1.vx -= ix; v1.vy -= iy; v1.vz -= iz;
+                    v2.vx += ix; v2.vy += iy; v2.vz += iz;
+                    
+                    const torqueStrength = 0.1;
+                    v1.rvx += (Math.random() - 0.5) * torqueStrength;
+                    v2.rvx -= (Math.random() - 0.5) * torqueStrength;
+                    v1.isActive = true; v2.isActive = true;
+                }
+            }
+
+            animate() {
+                this.animationId = requestAnimationFrame(this.animate);
+                this.controls.update();
+                this.updatePhysics();
+                if (this.state !== AppState.STABLE || this.controls.autoRotate || (this.ballMesh && this.ballProps.active) || this.placementCallback) this.draw();
+                this.renderer.render(this.scene, this.camera);
+            }
+
+            handleResize() {
+                if (this.camera && this.renderer) {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                }
+            }
+
+            setAutoRotate(enabled) { if (this.controls) this.controls.autoRotate = enabled; }
+
+            getJsonData() {
+                const data = this.voxels.map((v, i) => ({ id: i, x: +v.x.toFixed(2), y: +v.y.toFixed(2), z: +v.z.toFixed(2), c: '#' + v.color.getHexString() }));
+                return JSON.stringify(data, null, 2);
+            }
+
+            cleanup() {
+                this.stopMusic();
+                cancelAnimationFrame(this.animationId);
+                this.container.removeChild(this.renderer.domElement);
+                this.renderer.dispose();
+            }
+        }
+
+        // --- COMPONENTS ---
+
+        const WelcomeScreen = ({ visible }) => (
+            <div className={`absolute top-24 left-0 w-full pointer-events-none flex justify-center z-10 select-none transition-all duration-500 ease-out transform font-sans ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-8'}`}>
+              <div className="text-center flex flex-col items-center gap-4 bg-slate-50/80 backdrop-blur-md p-8 rounded-3xl border border-slate-200 shadow-lg">
+                <h1 className="text-4xl font-black text-slate-800 uppercase tracking-widest mb-2">Voxel Toy Box</h1>
+                <div className="space-y-3 mt-2">
+                    <p className="text-lg font-bold text-slate-700">Build amazing voxel models</p>
+                    <p className="text-lg font-bold text-slate-700">Break them down and rebuild them</p>
+                    <p className="text-lg font-bold text-slate-700">Share your creations with friends</p>
+                </div>
+              </div>
+            </div>
+        );
+
+        const JsonModal = ({ isOpen, onClose, data = '', isImport = false, onImport }) => {
+          const [importText, setImportText] = useState('');
+          const [error, setError] = useState('');
+          const [isCopied, setIsCopied] = useState(false);
+          useEffect(() => { if (isOpen) { setImportText(''); setError(''); setIsCopied(false); } }, [isOpen]);
+          if (!isOpen) return null;
+          const handleImportClick = () => {
+              if (!importText.trim()) { setError('Please paste JSON data first.'); return; }
+              try { JSON.parse(importText); if (onImport) { onImport(importText); onClose(); } } catch (e) { setError('Invalid JSON format.'); }
+          };
+          const handleCopy = async () => { if (!data) return; try { await navigator.clipboard.writeText(data); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); } catch (err) {} };
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 backdrop-blur-md p-4 font-sans">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col h-[70vh] border-4 border-slate-100 animate-in fade-in zoom-in duration-200 scale-95 sm:scale-100">
+                <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl ${isImport ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'}`}>
+                        {isImport ? <Upload size={24} /> : <FileJson size={24} />}
+                    </div>
+                    <div><h2 className="text-xl font-extrabold text-slate-800">{isImport ? 'Import Blueprint' : 'Copy and share'}</h2></div>
+                  </div>
+                  <button onClick={onClose} className="p-2 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200"><X size={24} /></button>
+                </div>
+                <div className="flex-1 p-6 overflow-hidden bg-slate-50/50 flex flex-col relative">
+                  <textarea readOnly={!isImport} value={isImport ? importText : data} onChange={isImport ? (e) => setImportText(e.target.value) : undefined} placeholder={isImport ? "Paste JSON here..." : ""} className={`w-full h-full resize-none bg-white border-2 rounded-xl p-4 font-mono text-xs text-slate-600 focus:outline-none transition-all ${isImport ? 'border-emerald-200 focus:border-emerald-400' : 'border-slate-200 focus:border-blue-400'}`} />
+                  {isImport && error && <div className="absolute bottom-8 left-8 right-8 bg-rose-100 text-rose-600 px-4 py-2 rounded-lg text-xs font-bold">{error}</div>}
+                </div>
+                <div className="p-6 border-t border-slate-100 flex justify-end bg-white rounded-b-3xl gap-3">
+                  {isImport ? (
+                      <><button onClick={onClose} className="px-6 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Cancel</button>
+                      <button onClick={handleImportClick} className="px-6 py-3 bg-emerald-500 text-white text-sm font-bold rounded-xl hover:bg-emerald-600 border-b-[4px] border-emerald-700 active:border-b-0 active:translate-y-[4px]">Import</button></>
+                  ) : (
+                      <><button onClick={handleCopy} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold rounded-xl border-b-[4px] active:border-b-0 active:translate-y-[4px] ${isCopied ? 'bg-emerald-500 text-white border-emerald-700' : 'bg-blue-500 text-white border-blue-700'}`}>{isCopied ? <Check size={18} /> : <Copy size={18} />}{isCopied ? 'Copied!' : 'Copy'}</button>
+                      <button onClick={onClose} className="px-6 py-3 bg-slate-800 text-white text-sm font-bold rounded-xl">Close</button></>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const SceneSelectionScreen = ({ onSelect }) => {
+          const scenes = [
+            { id: 'lab', name: 'The Laboratory', icon: <Box size={32} />, desc: 'Controlled environment.', color: 'bg-slate-800 text-slate-100' },
+            { id: 'grassland', name: 'Grasslands', icon: <CloudSun size={32} />, desc: 'Open skies & fields.', color: 'bg-sky-400 text-white' },
+            { id: 'desert', name: 'Sand Dunes', icon: <Sun size={32} />, desc: 'Warm sand.', color: 'bg-orange-400 text-white' },
+            { id: 'space', name: 'Deep Space', icon: <Rocket size={32} />, desc: 'Zero-G void.', color: 'bg-indigo-900 text-indigo-100' }
+          ];
+          return (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900 overflow-y-auto py-12 px-4">
+              <div className="w-full max-w-4xl text-center">
+                <h1 className="text-3xl md:text-5xl font-black text-white mb-4 uppercase tracking-tight">Select Location</h1>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-10">
+                  {scenes.map((scene) => (
+                    <button key={scene.id} onClick={() => onSelect(scene.id)} className={`group relative overflow-hidden p-8 rounded-3xl text-left transition-all duration-300 transform hover:scale-[1.02] border-4 border-transparent hover:border-white/20 shadow-2xl ${scene.color}`}>
+                      <div className="relative z-10 flex flex-col h-full justify-between gap-4">
+                         <div className="bg-white/20 w-fit p-4 rounded-2xl backdrop-blur-sm">{scene.icon}</div>
+                         <div><h3 className="text-2xl font-black uppercase mb-1">{scene.name}</h3><p className="font-bold opacity-80 text-sm">{scene.desc}</p></div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const ConfigurationScreen = ({ initialConfig, selectedEnv, onStart, onBack }) => {
+          const [width, setWidth] = useState(initialConfig.cubeWidth);
+          const [height, setHeight] = useState(initialConfig.cubeHeight);
+          const [depth, setDepth] = useState(initialConfig.cubeDepth);
+          const [weight, setWeight] = useState(initialConfig.ballWeight);
+          const [size, setSize] = useState(initialConfig.ballSize);
+          const [roomSize, setRoomSize] = useState(initialConfig.roomSize || 100);
+          const [selectedColors, setSelectedColors] = useState(initialConfig.colors || RAINBOW_COLORS.map(c => c.value));
+
+          const toggleColor = (val) => {
+              setSelectedColors(prev => prev.includes(val) ? (prev.length === 1 ? prev : prev.filter(c => c !== val)) : (prev.length >= 7 ? prev : [...prev, val]));
+          };
+
+          // Define handleSubmit
+          const handleSubmit = () => {
+              onStart({
+                  cubeWidth: width,
+                  cubeHeight: height,
+                  cubeDepth: depth,
+                  ballWeight: weight,
+                  ballSize: size,
+                  colors: selectedColors,
+                  roomSize: roomSize,
+                  environment: selectedEnv
+              });
+          };
+
+          return (
+            <div className="absolute inset-0 z-50 flex items-start justify-center bg-slate-900/90 backdrop-blur-md animate-in fade-in duration-500 overflow-y-auto pt-safe pb-safe">
+              <div className="w-full max-w-xl my-4 sm:my-10 px-4">
+                <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-2xl text-center border-4 border-indigo-100 relative">
+                    <button onClick={onBack} className="absolute top-6 left-6 p-2 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-800"><ArrowLeft size={24} strokeWidth={3} /></button>
+                    <h1 className="text-2xl sm:text-3xl font-black text-slate-800 mb-2 uppercase mt-2">Voxel Setup</h1>
+                    <div className="space-y-4 sm:space-y-6 text-left mt-8">
+                        <div className="bg-slate-50 p-4 sm:p-6 rounded-2xl border border-slate-100">
+                            <div className="flex items-center gap-3 mb-4 text-indigo-600"><Box size={24} /><h3 className="font-bold uppercase tracking-wider text-sm">Cube Dimensions</h3></div>
+                            <div className="grid grid-cols-3 gap-3">
+                                {[{l:'Width (X)',v:width,s:setWidth}, {l:'Height (Y)',v:height,s:setHeight}, {l:'Depth (Z)',v:depth,s:setDepth}].map((f,i) => (
+                                    <label key={i} className="flex flex-col gap-2"><span className="text-[10px] font-bold text-slate-400 uppercase">{f.l}</span><input type="number" min="2" max="20" value={f.v} onChange={e => f.s(Number(e.target.value))} className="p-2 sm:p-3 rounded-xl border-2 border-slate-200 font-bold text-center focus:border-indigo-400 focus:outline-none" /></label>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="bg-slate-50 p-4 sm:p-6 rounded-2xl border border-slate-100">
+                            <div className="flex items-center justify-between mb-4 text-slate-600"><div className="flex items-center gap-3"><Maximize size={24} /><h3 className="font-bold uppercase tracking-wider text-sm">Space</h3></div><span className="text-lg font-black">{roomSize}</span></div>
+                            <input type="range" min="20" max="150" value={roomSize} onChange={e => setRoomSize(Number(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-500" />
+                        </div>
+                        <div className="bg-slate-50 p-4 sm:p-6 rounded-2xl border border-slate-100">
+                            <div className="flex items-center justify-between mb-4 text-purple-600"><div className="flex items-center gap-3"><Palette size={24} /><h3 className="font-bold uppercase tracking-wider text-sm">Colors</h3></div></div>
+                            <div className="flex justify-between items-center gap-1 sm:gap-2">
+                                {RAINBOW_COLORS.map((c) => (
+                                    <button key={c.name} onClick={() => toggleColor(c.value)} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center ${c.tw} ${selectedColors.includes(c.value) ? 'scale-110 shadow-lg ring-2 ring-indigo-200' : 'opacity-40 scale-90'}`}>
+                                        {selectedColors.includes(c.value) && <Check size={14} className="text-white" strokeWidth={4} />}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-4">
+                             <div>
+                                <div className="flex items-center justify-between mb-2 text-rose-500"><div className="flex items-center gap-2"><Weight size={20} /><h3 className="font-bold uppercase tracking-wider text-xs">Ball Weight</h3></div><span className="text-lg font-black">{weight}</span></div>
+                                <input type="range" min="1" max="100" value={weight} onChange={e => setWeight(Number(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-rose-500" />
+                             </div>
+                             <div>
+                                <div className="flex items-center justify-between mb-2 text-sky-500"><div className="flex items-center gap-2"><Ruler size={20} /><h3 className="font-bold uppercase tracking-wider text-xs">Ball Size</h3></div><span className="text-lg font-black">{size}</span></div>
+                                <input type="range" min="1" max="20" value={size} onChange={e => setSize(Number(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-500" />
+                             </div>
+                        </div>
+                    </div>
+                    <button onClick={() => handleSubmit()} className="w-full mt-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-lg shadow-xl border-b-4 border-indigo-800 active:border-b-0 active:translate-y-1">RUN SIMULATION</button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const TactileButton = ({ onClick, disabled, icon, label, color, compact }) => {
+          const colorStyles = {
+            slate:   'bg-slate-200 text-slate-600 shadow-slate-300 hover:bg-slate-300',
+            rose:    'bg-rose-500 text-white shadow-rose-700 hover:bg-rose-600',
+            sky:     'bg-sky-500 text-white shadow-sky-700 hover:bg-sky-600',
+            emerald: 'bg-emerald-500 text-white shadow-emerald-700 hover:bg-emerald-600',
+            amber:   'bg-amber-400 text-amber-900 shadow-amber-600 hover:bg-amber-500',
+            indigo:  'bg-indigo-500 text-white shadow-indigo-700 hover:bg-indigo-600',
+          };
+          return (
+            <button onClick={onClick} disabled={disabled} className={`group relative flex items-center justify-center gap-2 rounded-xl font-bold text-sm transition-all duration-100 border-b-[4px] active:border-b-0 active:translate-y-[4px] ${compact ? 'p-3' : 'px-4 py-3'} ${disabled ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed shadow-none' : `${colorStyles[color]} border-black/20 shadow-lg`}`}>
+              {icon} {!compact && <span>{label}</span>}
+            </button>
+          );
+        };
+
+        const BigActionButton = ({ onClick, icon, label, color, wide }) => {
+            const bg = color === 'rose' ? 'bg-rose-500 hover:bg-rose-600 border-rose-800 shadow-rose-900/30' : 'bg-sky-500 hover:bg-sky-600 border-sky-800 shadow-sky-900/30';
+            return (
+                <button onClick={onClick} className={`group relative flex flex-col items-center justify-center rounded-3xl text-white shadow-xl border-b-[8px] active:border-b-0 active:translate-y-[8px] transition-all duration-150 ${bg} ${wide ? 'w-64 h-24 flex-row gap-4' : 'w-32 h-32'}`}>
+                    <div className={wide ? "" : "mb-2"}>{icon}</div><div className="text-sm font-black tracking-wider">{label}</div>
+                </button>
+            )
+        }
+
+        const UIOverlay = ({ voxelCount, appState, currentBaseModel, isAutoRotate, isInfoVisible, isPlacingBall, isMuted, showReset, showBackToSetup, onStartPlacement, onCancelPlacement, onDismantle, onShowJson, onImportJson, onToggleRotation, onToggleInfo, onToggleMute, onReset }) => {
+          const isStable = appState === AppState.STABLE;
+          const isDismantling = appState === AppState.DISMANTLING;
+          return (
+            <div className="absolute top-0 left-0 w-full h-full pointer-events-none select-none overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 p-4 pt-safe flex justify-between items-start z-10">
+                <div className="pointer-events-auto flex flex-col gap-2 mt-2 sm:mt-0">
+                    <div className="flex items-center gap-3 px-4 py-2 bg-white/90 backdrop-blur-sm shadow-sm rounded-xl border border-slate-200 text-slate-500 font-bold w-fit">
+                        <div className="bg-blue-100 p-1.5 rounded-lg text-blue-600"><Box size={16} strokeWidth={3} /></div>
+                        <div className="flex flex-col leading-none"><span className="text-[10px] uppercase tracking-wider opacity-60">Voxels</span><span className="text-lg text-slate-800 font-extrabold font-mono">{voxelCount}</span></div>
+                    </div>
+                </div>
+                <div className="pointer-events-auto flex gap-2 flex-wrap justify-end mt-2 sm:mt-0 max-w-[50%] sm:max-w-none">
+                    <TactileButton onClick={onToggleInfo} color={isInfoVisible ? 'indigo' : 'slate'} icon={<Info size={18} strokeWidth={2.5} />} label="Info" compact />
+                    <TactileButton onClick={onToggleRotation} color={isAutoRotate ? 'sky' : 'slate'} icon={isAutoRotate ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />} label={isAutoRotate ? "Pause" : "Play"} compact />
+                    <TactileButton onClick={onToggleMute} color={isMuted ? 'slate' : 'emerald'} icon={isMuted ? <VolumeX size={18} strokeWidth={2.5} /> : <Volume2 size={18} strokeWidth={2.5} />} label={isMuted ? "Unmute" : "Mute"} compact />
+                    <TactileButton onClick={onShowJson} color="slate" icon={<Code2 size={18} strokeWidth={2.5} />} label="Share" compact={window.innerWidth < 640} />
+                </div>
+              </div>
+
+              <div className="absolute bottom-0 left-0 w-full pb-safe flex justify-center items-end pointer-events-none p-4 sm:p-8">
+                <div className="pointer-events-auto transition-all duration-500 ease-in-out transform w-full flex justify-center">
+                    {showReset && (
+                        <div className="animate-in slide-in-from-bottom-10 fade-in duration-500 mb-4 sm:mb-8">
+                            <BigActionButton onClick={onReset} icon={<RotateCcw size={32} strokeWidth={2.5} />} label="NEW SIMULATION" color="sky" wide />
+                        </div>
+                    )}
+                    {isPlacingBall && !showReset && (
+                        <div className="animate-in slide-in-from-bottom-10 fade-in duration-300 mb-4 sm:mb-8 flex flex-col items-center">
+                             <button onClick={onCancelPlacement} className="flex items-center gap-3 bg-slate-800 hover:bg-slate-900 text-white px-8 py-4 rounded-full font-black shadow-xl border-b-4 border-black active:border-b-0 active:translate-y-1 transition-all">
+                                <X size={20} strokeWidth={3} /><span>CANCEL AIM</span>
+                             </button>
+                             <p className="text-center text-xs font-bold text-slate-500 bg-white/50 backdrop-blur-md mt-4 py-1 px-3 rounded-full">Click anywhere to drop</p>
+                        </div>
+                    )}
+                    {isStable && !showReset && !isPlacingBall && (
+                         <div className="flex items-center gap-4 animate-in slide-in-from-bottom-10 fade-in duration-300 mb-2 sm:mb-4">
+                             <button onClick={onStartPlacement} className="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-full font-black shadow-lg shadow-rose-500/30 border-b-[4px] border-rose-800 active:border-b-0 active:translate-y-[4px] transition-all hover:scale-105">
+                                <Target size={20} strokeWidth={3} className="sm:w-6 sm:h-6" /><span className="text-sm sm:text-base">LAUNCH</span>
+                             </button>
+                             <div className="scale-90 sm:scale-100">
+                                <TactileButton onClick={onDismantle} icon={<Hammer size={20} strokeWidth={2.5} />} label="BREAK" color="slate" />
+                             </div>
+                         </div>
+                    )}
+                    {isDismantling && !showReset && showBackToSetup && (
+                        <div className="animate-in slide-in-from-bottom-10 fade-in duration-300 mb-4 sm:mb-8">
+                             <div className="animate-in fade-in zoom-in duration-300">
+                                 <TactileButton onClick={onReset} icon={<Settings size={20} />} label="SETUP" color="slate" />
+                             </div>
+                        </div>
+                    )}
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const App = () => {
+          const containerRef = useRef(null);
+          const engineRef = useRef(null);
+          const [appState, setAppState] = useState(AppState.STABLE);
+          const [voxelCount, setVoxelCount] = useState(0);
+          const [isJsonModalOpen, setIsJsonModalOpen] = useState(false);
+          const [jsonModalMode, setJsonModalMode] = useState('view');
+          const [showWelcome, setShowWelcome] = useState(false);
+          const [jsonData, setJsonData] = useState('');
+          const [isAutoRotate, setIsAutoRotate] = useState(true);
+          const [isMuted, setIsMuted] = useState(false);
+          const [flowState, setFlowState] = useState('scene_select');
+          const [isPlacingBall, setIsPlacingBall] = useState(false);
+          const [showReset, setShowReset] = useState(false);
+          const [showBackToSetup, setShowBackToSetup] = useState(false);
+          const [config, setConfig] = useState({ cubeWidth: 8, cubeHeight: 8, cubeDepth: 8, ballWeight: 50, ballSize: 5, colors: RAINBOW_COLORS.map(c => c.value), roomSize: 100, environment: 'lab' });
+          const [currentBaseModel, setCurrentBaseModel] = useState('Custom Cube');
+
+          useEffect(() => {
+            if (!containerRef.current) return;
+            const engine = new VoxelEngine(containerRef.current, (s) => setAppState(s), (c) => setVoxelCount(c), () => setShowReset(true));
+            engineRef.current = engine;
+            engine.setMute(isMuted);
+            engine.loadInitialModel(Generators.CustomCube(8, 8, 8, config.colors));
+            const handleResize = () => engine.handleResize();
+            window.addEventListener('resize', handleResize);
+            return () => { window.removeEventListener('resize', handleResize); engine.cleanup(); };
+          }, []);
+
+          const handleSceneSelect = (env) => {
+              setConfig(prev => ({ ...prev, environment: env }));
+              if (engineRef.current) engineRef.current.updateEnvironment(env, config.roomSize);
+              setFlowState('config');
+          };
+
+          const handleConfigStart = (newConfig) => {
+              setConfig(newConfig);
+              if (engineRef.current) {
+                  engineRef.current.initAudio();
+                  engineRef.current.startMusic();
+                  engineRef.current.updateEnvironment(newConfig.environment, newConfig.roomSize);
+                  engineRef.current.loadInitialModel(Generators.CustomCube(newConfig.cubeWidth, newConfig.cubeHeight, newConfig.cubeDepth, newConfig.colors));
+                  setCurrentBaseModel('Custom Cube');
+                  setFlowState('simulation');
+                  setIsPlacingBall(false);
+                  setShowBackToSetup(false);
+              }
+          };
+
+          const handleStartPlacement = () => {
+              if (engineRef.current) {
+                  setIsPlacingBall(true);
+                  const radius = Math.max(0.6, config.ballSize * 0.6);
+                  engineRef.current.startPlacementMode(radius, (x, z) => {
+                      engineRef.current.stopPlacementMode();
+                      setIsPlacingBall(false);
+                      engineRef.current.dropBall(config.ballWeight, config.ballSize, x, z);
+                  });
+              }
+          };
+
+          const handleReset = () => {
+              setShowReset(false); setShowBackToSetup(false); setFlowState('config'); setIsPlacingBall(false);
+              if (engineRef.current) {
+                  engineRef.current.stopPlacementMode();
+                  engineRef.current.stopMusic();
+                  engineRef.current.loadInitialModel(Generators.CustomCube(config.cubeWidth, config.cubeHeight, config.cubeDepth, config.colors));
+              }
+          };
+
+          const handleDismantle = () => {
+            engineRef.current?.dismantle();
+            setTimeout(() => { setShowBackToSetup(true); }, 2000);
+          };
+
+          const handleShowJson = () => {
+            if (engineRef.current) {
+              setJsonData(engineRef.current.getJsonData()); setJsonModalMode('view'); setIsJsonModalOpen(true);
+            }
+          };
+
+          const handleJsonImport = (jsonStr) => {
+              try {
+                  const rawData = JSON.parse(jsonStr);
+                  if (!Array.isArray(rawData)) throw new Error("JSON must be an array");
+                  const voxelData = rawData.map(v => {
+                      let colorVal = v.c || v.color;
+                      let colorInt = 0xCCCCCC;
+                      if (typeof colorVal === 'string') { if (colorVal.startsWith('#')) colorVal = colorVal.substring(1); colorInt = parseInt(colorVal, 16); }
+                      else if (typeof colorVal === 'number') colorInt = colorVal;
+                      return { x: Number(v.x) || 0, y: Number(v.y) || 0, z: Number(v.z) || 0, color: isNaN(colorInt) ? 0xCCCCCC : colorInt };
+                  });
+                  if (engineRef.current) {
+                      engineRef.current.loadInitialModel(voxelData);
+                      setCurrentBaseModel('Imported Build');
+                  }
+              } catch (e) { alert("Failed to import JSON."); }
+          };
+
+          const handleToggleRotation = () => { setIsAutoRotate(!isAutoRotate); if (engineRef.current) engineRef.current.setAutoRotate(!isAutoRotate); };
+          const handleToggleMute = () => { setIsMuted(!isMuted); if (engineRef.current) engineRef.current.setMute(!isMuted); };
+
+          return (
+            <div className="relative w-full h-[100dvh] bg-[#1a1a1a] overflow-hidden">
+              <div ref={containerRef} className="absolute inset-0 z-0" />
+              {flowState === 'scene_select' && <SceneSelectionScreen onSelect={handleSceneSelect} />}
+              {flowState === 'config' && <ConfigurationScreen initialConfig={config} selectedEnv={config.environment} onStart={handleConfigStart} onBack={() => setFlowState('scene_select')} />}
+              {flowState === 'simulation' && <UIOverlay voxelCount={voxelCount} appState={appState} currentBaseModel={currentBaseModel} isAutoRotate={isAutoRotate} isInfoVisible={showWelcome} isPlacingBall={isPlacingBall} isMuted={isMuted} showReset={showReset} showBackToSetup={showBackToSetup} onStartPlacement={handleStartPlacement} onCancelPlacement={() => { engineRef.current?.stopPlacementMode(); setIsPlacingBall(false); }} onDismantle={handleDismantle} onShowJson={handleShowJson} onImportJson={() => { setJsonModalMode('import'); setIsJsonModalOpen(true); }} onToggleRotation={handleToggleRotation} onToggleInfo={() => setShowWelcome(!showWelcome)} onToggleMute={handleToggleMute} onReset={handleReset} />}
+              {flowState === 'simulation' && <WelcomeScreen visible={showWelcome} />}
+              <JsonModal isOpen={isJsonModalOpen} onClose={() => setIsJsonModalOpen(false)} data={jsonData} isImport={jsonModalMode === 'import'} onImport={handleJsonImport} />
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
